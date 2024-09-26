@@ -4,6 +4,7 @@ import express from "express";
 import cors from 'cors';
 import multer from "multer";
 import axios, { isAxiosError } from "axios";
+import { formatServiceNowTicket, setServiceNowTicketStatus } from './utils.js';
 
 const app = express();
 const upload = multer();
@@ -80,7 +81,7 @@ app.post('/bitbucket/commit-file', async (req, res) => {
       const base_url = process.env.BITBUCKET_REST_API_BASE_URL;
 
       const url = `${base_url}/repositories/${workspace}/${repo_slug}/src`;
-      console.log(url);
+
       const axiosInstance = axios.create({
          baseURL: url,
          headers: {
@@ -121,25 +122,93 @@ app.post('/bitbucket/commit-file', async (req, res) => {
 });
 
 
-app.post('/service-now/ticket/', (req, res) => {
-   try {
-
-
-   } catch (error) {
-      res.sendStatus(500);
-   }
-});
-
-app.get('service-now/ticket/:ticket_id', (req, res) => {
+app.get('/service-now/ticket/:ticket_id', async (req, res) => {
    try {
       const ticket_id = req.params.ticket_id;
 
-      
+      const instance_url = process.env.SERVICENOW_INSTANCE_URL;
+      const ticket_endpoint = process.env.SERVICENOW_TICKET_ENDPOINT;
+      const oauth_token_endpoint = process.env.SERVICENOW_OAUTH_TOKEN_ENDPOINT;
+
+      const oauth_url = `${instance_url}${oauth_token_endpoint}`;
+      const ticket_url = `${instance_url}${ticket_endpoint}`;
+
+      const oauth_credentials = {
+         grant_type: 'password',
+         client_id: process.env.SERVICENOW_CLIENT_ID,
+         client_secret: process.env.SERVICENOW_CLIENT_SECRET,
+         username: process.env.SERVICENOW_USERNAME,
+         password: process.env.SERVICENOW_PASSWORD,
+      }
+
+      const result = await axios.post(oauth_url, new URLSearchParams(oauth_credentials).toString());
+
+      const access_token = result.data.access_token;
+
+      const response = await axios.get(`${ticket_url}/${ticket_id}`, {
+         headers: {
+            Authorization: `Bearer ${access_token}`
+         }
+      });
+
+      const ticket = formatServiceNowTicket(response.data.result);
+
+      return res.status(200).json(ticket);
 
    } catch (error) {
+      console.log(error);
       res.sendStatus(500);
    }
 });
+
+app.post('/service-now/ticket', async (req, res) => {
+   try {
+
+      const { ticket_title, ticket_description, ticket_status } = req.body;;
+
+      const ticket_payload = {
+         short_description: ticket_title,
+         description: ticket_description,
+         state: setServiceNowTicketStatus(ticket_status),
+      }
+
+
+      const instance_url = process.env.SERVICENOW_INSTANCE_URL;
+      const ticket_endpoint = process.env.SERVICENOW_TICKET_ENDPOINT;
+      const oauth_token_endpoint = process.env.SERVICENOW_OAUTH_TOKEN_ENDPOINT;
+
+      const oauth_url = `${instance_url}${oauth_token_endpoint}`;
+      const ticket_url = `${instance_url}${ticket_endpoint}`;
+
+      const oauth_credentials = {
+         grant_type: 'password',
+         client_id: process.env.SERVICENOW_CLIENT_ID,
+         client_secret: process.env.SERVICENOW_CLIENT_SECRET,
+         username: process.env.SERVICENOW_USERNAME,
+         password: process.env.SERVICENOW_PASSWORD,
+      }
+
+      const result = await axios.post(oauth_url, new URLSearchParams(oauth_credentials).toString());
+
+      const access_token = result.data.access_token;
+
+      const response = await axios.post(ticket_url, ticket_payload, {
+         headers: {
+            Authorization: `Bearer ${access_token}`
+         }
+      });
+
+      const created_ticket = formatServiceNowTicket(response.data.result);
+
+      return res.status(201).json(created_ticket);
+
+   } catch (error) {
+      console.log(error);
+      res.sendStatus(500);
+   }
+});
+
+
 
 
 app.listen(8000, () => {
